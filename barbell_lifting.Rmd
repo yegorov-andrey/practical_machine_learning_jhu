@@ -1,0 +1,131 @@
+---
+title: "Barbell Lifting Recognition"
+author: "Andrey Yegorov"
+date: "10/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+To predict the manner in which a group of enthusiasts did the barbell lifting 
+exercises - correctly and incorrectly in 5 different ways, personal activity 
+measurements where collected from such devices as Jawbone Up, Nike FuelBand, and Fitbit.
+The goal of this report is to analyse these data and train the classifier for 
+effective prediction of the activity type based on the provided measurements.
+
+### Dependencies
+
+Attach packages required for the analysis.
+```{r dependencies, message=FALSE}
+library(caret)
+library(dplyr)
+library(randomForest)
+```
+
+Load the training data set.
+```{r load}
+if (!file.exists('pml-training.csv')) {
+        download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',
+                destfile='pml-training.csv', method='curl')       
+}
+pmlData <- read.csv('pml-training.csv', na.strings=c("NA",""))
+```
+
+### Split the data
+
+Let's split our data into 3 sets:
+
+- 50% - *training* - to train classifiers
+- 20% - *testing* - to adjust parameters of classifiers and choose the best one
+- 30% - *validation* - to evaluate the performance of the chosen classifier
+
+```{r split}
+set.seed(20201010)
+inBuild <- createDataPartition(pmlData$classe, p=.7, list=F)
+validation <- pmlData[-inBuild,]
+buildData <- pmlData[inBuild,]
+inTrain <- createDataPartition(buildData$classe, p=.7, list=F)
+training <- buildData[inTrain,]
+testing <- buildData[-inTrain,]
+c(training.count=nrow(training), testing.count=nrow(testing), validation.count=nrow(validation))
+```
+
+### Exploratory Data Analysis
+
+High level overview of the training set.
+```{r eda}
+dim(training)
+table(training$classe)
+table(is.na(training))
+```
+We may see near 10K observations with 1500-3000 observations per each class 
+and more than one hundred variables and many NA values.
+
+### Feature Selection
+
+Machine learning algorithms are quite sensitive to NAs, so, select variables 
+with less than 80% of NA values.
+```{r}
+tidytrain <- training
+tidytrain <- tidytrain[, colMeans(is.na(tidytrain)) < 0.8]
+```
+Number of NAs in selected variables: `r sum(is.na(tidytrain))`.
+
+As we have quite a lot of variable we may drop ones with near-zero variance to 
+avoid overfitting.
+```{r}
+tidytrain <- tidytrain[, -nearZeroVar(training)]
+```
+
+Remove several more out of interest variables - row number, user name, time 
+windows and stamps.
+```{r}
+tidytrain <- tidytrain %>%
+        select(-c('X', 'user_name', 'num_window'), -matches('timestamp'))
+```
+
+Set correct types for the remaining variables.
+```{r}
+tidytrain$classe <- factor(training$classe)
+```
+
+As a result, tidy training set contains `r ncol(tidytrain)` variables and no NA 
+values.
+
+### Model Training
+
+Categorical output and many numeric variables makes ensemble of decision trees a reasonable choice.  
+Several gradient boosting machines and random forests with different settings were trained.  
+Based on prediction accuracy on test set and speed of training, random forest 
+of 10 trees was chosen.
+```{r model_fit}
+forest <- randomForest(formula=classe ~ ., ntree=10, data=tidytrain)
+confusionMatrix(predict(forest, testing), factor(testing$classe))
+```
+As accuracy is more than 97% for each class, this model will be used for classification.
+
+Benefit of random forest is interpretability. The following plot shows how 
+important each feature in predicting *classe* outcome.
+```{r}
+varImpPlot(forest, main='Random forest of 10 trees')
+```
+
+### Model Estimation
+
+To estimate out-of sample error, we need to use independent set which was not 
+used during model training, tuning and model selection - validation set.
+```{r model_auc}
+confusionMatrix(predict(forest, validation), factor(validation$classe))
+```
+The expected accuracy of our fitted random forest with 10 trees is more than 
+97% for each class.
+
+### Conclusion
+
+For classification with many variables, ensemble of non-linear methods, such as 
+GBM and random forests, can show quite high accuracy and good interpretability 
+of classification results.
